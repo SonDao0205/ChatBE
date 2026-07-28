@@ -1,29 +1,34 @@
-# Compiled output
+# ─── Compiled output ─────────────────────────────────────────
 dist/
 build/
 
-# Node modules
+# ─── Node modules ────────────────────────────────────────────
 node_modules/
 
-# Environment variables
+# ─── Environment variables ───────────────────────────────────
 .env
 .env.local
 .env.*.local
+# Keep .env.example (template for other devs)
+!.env.example
 
-# Logs
+# ─── Logs ────────────────────────────────────────────────────
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-# OS
+# ─── Testing ─────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ─── OS ──────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# Editor directories and files
+# ─── Editor ──────────────────────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -32,6 +37,3 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-
-# Testing
-coverage/
