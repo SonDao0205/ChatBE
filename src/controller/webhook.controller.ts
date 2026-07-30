@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import {
   MarketplaceWebhookService,
   WebhookAuthenticationError,
+  WebhookIgnoredError,
 } from '../service/marketplaceWebhook.service';
 
 const marketplaceWebhookService = new MarketplaceWebhookService();
@@ -30,6 +31,15 @@ export async function receiveMarketplaceMessageWebhook(
     if (error instanceof WebhookAuthenticationError) {
       response.status(401).json({
         code: 'WEBHOOK_AUTHENTICATION_FAILED',
+        message: error.message,
+        data: null,
+      });
+      return;
+    }
+
+    if (error instanceof WebhookIgnoredError) {
+      response.status(200).json({
+        code: 'WEBHOOK_IGNORED',
         message: error.message,
         data: null,
       });

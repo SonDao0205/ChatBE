@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Conversation } from '../entity/Conversation';
 import { Message } from '../entity/Message';
@@ -17,6 +18,25 @@ function marketplaceFilter(channel: string) {
   return null;
 }
 
+function onlyConnectedMarketplaceAccount<T extends ObjectLiteral>(
+  query: SelectQueryBuilder<T>,
+  accountAlias = 'account',
+  credentialsAlias = 'credentials',
+) {
+  return query
+    .innerJoin(`${accountAlias}.credentials`, credentialsAlias)
+    .andWhere(`${accountAlias}.connection_status = :connectedStatus`, {
+      connectedStatus: 'CONNECTED',
+    })
+    .andWhere(`${accountAlias}.deleted_at IS NULL`)
+    .andWhere(
+      `(${accountAlias}.expires_at IS NULL OR ${accountAlias}.expires_at > UTC_TIMESTAMP(3))`,
+    )
+    .andWhere(
+      `(${credentialsAlias}.access_token_expires_at IS NULL OR ${credentialsAlias}.access_token_expires_at > UTC_TIMESTAMP(3))`,
+    );
+}
+
 export async function getConversations(
   request: Request,
   response: Response,
@@ -29,11 +49,13 @@ export async function getConversations(
 
     const query = AppDataSource.getRepository(Conversation)
       .createQueryBuilder('conversation')
-      .leftJoinAndSelect('conversation.marketplaceCustomer', 'customer')
-      .leftJoinAndSelect('conversation.marketplaceAccount', 'account')
-      .leftJoinAndSelect('account.marketplace', 'marketplace')
+      .innerJoinAndSelect('conversation.marketplaceCustomer', 'customer')
+      .innerJoinAndSelect('conversation.marketplaceAccount', 'account')
+      .innerJoinAndSelect('account.marketplace', 'marketplace')
       .where('conversation.tenant_id = :tenantId', { tenantId })
       .orderBy('conversation.last_message_at', 'DESC');
+
+    onlyConnectedMarketplaceAccount(query);
 
     if (selectedMarketplaceCode) {
       query.andWhere('marketplace.marketplace_code = :marketplaceCode', {
@@ -75,18 +97,17 @@ export async function getConversationDetail(
   try {
     const tenantId = String(request.query.tenantId || defaultTenantId);
     const conversationId = String(request.params.conversationId);
-    const conversation = await AppDataSource.getRepository(Conversation).findOne({
-      where: {
-        id: conversationId,
-        tenantId,
-      },
-      relations: {
-        marketplaceCustomer: true,
-        marketplaceAccount: {
-          marketplace: true,
-        },
-      },
-    });
+    const query = AppDataSource.getRepository(Conversation)
+      .createQueryBuilder('conversation')
+      .innerJoinAndSelect('conversation.marketplaceCustomer', 'customer')
+      .innerJoinAndSelect('conversation.marketplaceAccount', 'account')
+      .innerJoinAndSelect('account.marketplace', 'marketplace')
+      .where('conversation.id = :conversationId', { conversationId })
+      .andWhere('conversation.tenant_id = :tenantId', { tenantId });
+
+    onlyConnectedMarketplaceAccount(query);
+
+    const conversation = await query.getOne();
 
     if (!conversation) {
       response.status(404).json({
@@ -115,14 +136,20 @@ export async function getConversationMessages(
   try {
     const tenantId = String(request.query.tenantId || defaultTenantId);
     const conversationId = String(request.params.conversationId);
-    const messages = await AppDataSource.getRepository(Message)
+    const query = AppDataSource.getRepository(Message)
       .createQueryBuilder('message')
+      .innerJoin('message.conversation', 'conversation')
+      .innerJoin('conversation.marketplaceAccount', 'account')
       .where('message.conversation_id = :conversationId', {
         conversationId,
       })
       .andWhere('message.tenant_id = :tenantId', { tenantId })
-      .orderBy('COALESCE(message.external_created_at, message.created_at)', 'ASC')
-      .getMany();
+      .andWhere('conversation.tenant_id = :tenantId', { tenantId })
+      .orderBy('COALESCE(message.external_created_at, message.created_at)', 'ASC');
+
+    onlyConnectedMarketplaceAccount(query);
+
+    const messages = await query.getMany();
 
     response.json({
       code: 0,
@@ -142,12 +169,15 @@ export async function getConversationOrders(
   try {
     const tenantId = String(request.query.tenantId || defaultTenantId);
     const conversationId = String(request.params.conversationId);
-    const conversation = await AppDataSource.getRepository(Conversation).findOne({
-      where: {
-        id: conversationId,
-        tenantId,
-      },
-    });
+    const query = AppDataSource.getRepository(Conversation)
+      .createQueryBuilder('conversation')
+      .innerJoin('conversation.marketplaceAccount', 'account')
+      .where('conversation.id = :conversationId', { conversationId })
+      .andWhere('conversation.tenant_id = :tenantId', { tenantId });
+
+    onlyConnectedMarketplaceAccount(query);
+
+    const conversation = await query.getOne();
 
     if (!conversation) {
       response.status(404).json({
@@ -236,18 +266,17 @@ export async function markConversationRead(
     const tenantId = String(request.body.tenantId || request.query.tenantId || defaultTenantId);
     const conversationId = String(request.params.conversationId);
     const conversationRepository = AppDataSource.getRepository(Conversation);
-    const conversation = await conversationRepository.findOne({
-      where: {
-        id: conversationId,
-        tenantId,
-      },
-      relations: {
-        marketplaceCustomer: true,
-        marketplaceAccount: {
-          marketplace: true,
-        },
-      },
-    });
+    const query = conversationRepository
+      .createQueryBuilder('conversation')
+      .innerJoinAndSelect('conversation.marketplaceCustomer', 'customer')
+      .innerJoinAndSelect('conversation.marketplaceAccount', 'account')
+      .innerJoinAndSelect('account.marketplace', 'marketplace')
+      .where('conversation.id = :conversationId', { conversationId })
+      .andWhere('conversation.tenant_id = :tenantId', { tenantId });
+
+    onlyConnectedMarketplaceAccount(query);
+
+    const conversation = await query.getOne();
 
     if (!conversation) {
       response.status(404).json({

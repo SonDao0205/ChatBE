@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { randomUUID } from 'node:crypto';
+import { createDecipheriv, randomUUID } from 'node:crypto';
 import { AppDataSource } from '../config/database';
 import { Conversation } from '../entity/Conversation';
 import { MarketplaceCredentials } from '../entity/MarketplaceCredentials';
@@ -8,19 +8,29 @@ import { emitConversationUpdated, emitMessageCreated } from './socket.service';
 
 const defaultTenantId =
   process.env.DEFAULT_TENANT_ID || '20000000-0000-0000-0000-000000000001';
+const defaultCredentialEncryptionKey =
+  'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 
 function decryptMarketplaceSecret(value: string) {
-  return value;
-}
+  if (!value.startsWith('v1:')) {
+    return value;
+  }
 
-function getFallbackAccessToken(marketplaceCode: string) {
-  if (marketplaceCode === 'TIKTOK_SHOP') {
-    return process.env.TIKTOK_SELLER_ACCESS_TOKEN || null;
-  }
-  if (marketplaceCode === 'LAZADA') {
-    return process.env.LAZADA_SELLER_ACCESS_TOKEN || null;
-  }
-  return null;
+  const encryptionKey = Buffer.from(
+    process.env.MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY ||
+      defaultCredentialEncryptionKey,
+    'base64',
+  );
+  const payload = Buffer.from(value.slice(3), 'base64');
+  const iv = payload.subarray(0, 12);
+  const authTag = payload.subarray(payload.length - 16);
+  const encrypted = payload.subarray(12, payload.length - 16);
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([
+    decipher.update(encrypted),
+    decipher.final(),
+  ]).toString('utf8');
 }
 
 export class MarketplaceMessageSenderService {
@@ -55,6 +65,35 @@ export class MarketplaceMessageSenderService {
 
     const marketplaceCode =
       conversation.marketplaceAccount.marketplace.marketplaceCode;
+    const marketplaceAccount = conversation.marketplaceAccount;
+    const now = new Date();
+
+    if (
+      marketplaceAccount.connectionStatus !== 'CONNECTED' ||
+      marketplaceAccount.deletedAt ||
+      (marketplaceAccount.expiresAt && marketplaceAccount.expiresAt <= now)
+    ) {
+      throw new Error('Marketplace account is not connected.');
+    }
+
+    const credentials = await credentialsRepository.findOneBy({
+      marketplaceAccountId: conversation.marketplaceAccountId,
+    });
+
+    if (!credentials) {
+      throw new Error('Marketplace credential is missing.');
+    }
+
+    if (credentials.accessTokenExpiresAt && credentials.accessTokenExpiresAt <= now) {
+      throw new Error('Marketplace seller access token is expired.');
+    }
+
+    const accessToken = decryptMarketplaceSecret(credentials.accessTokenEncrypted);
+
+    if (!accessToken) {
+      throw new Error('Marketplace seller access token is missing.');
+    }
+
     const clientMessageId = randomUUID();
 
     const queuedMessage = messageRepository.create({
@@ -86,17 +125,6 @@ export class MarketplaceMessageSenderService {
     });
 
     try {
-      const credentials = await credentialsRepository.findOneBy({
-        marketplaceAccountId: conversation.marketplaceAccountId,
-      });
-      const accessToken = credentials
-        ? decryptMarketplaceSecret(credentials.accessTokenEncrypted)
-        : getFallbackAccessToken(marketplaceCode);
-
-      if (!accessToken) {
-        throw new Error('Marketplace seller access token is missing.');
-      }
-
       const baseUrl = conversation.marketplaceAccount.marketplace.mockBaseUrl;
       if (!baseUrl) {
         throw new Error(`Marketplace ${marketplaceCode} does not have mock_base_url.`);
