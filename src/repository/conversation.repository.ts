@@ -1,6 +1,6 @@
 import { AppDataSource } from '../config/database';
 import { Conversation } from '../entity/Conversation';
-import { onlyConnectedMarketplaceAccount } from './marketplaceAccount.repository';
+import { onlyLinkedMarketplaceAccount } from './marketplaceAccount.repository';
 
 export class ConversationRepository {
   private readonly repository = AppDataSource.getRepository(Conversation);
@@ -19,7 +19,7 @@ export class ConversationRepository {
       })
       .orderBy('conversation.last_message_at', 'DESC');
 
-    onlyConnectedMarketplaceAccount(query);
+    onlyLinkedMarketplaceAccount(query);
 
     if (input.marketplaceCode) {
       query.andWhere('marketplace.marketplace_code = :marketplaceCode', {
@@ -43,7 +43,7 @@ export class ConversationRepository {
         tenantId: input.tenantId,
       });
 
-    return onlyConnectedMarketplaceAccount(query).getOne();
+    return onlyLinkedMarketplaceAccount(query).getOne();
   }
 
   findConnectedForOrders(input: { tenantId: string; conversationId: string }) {
@@ -57,7 +57,7 @@ export class ConversationRepository {
         tenantId: input.tenantId,
       });
 
-    return onlyConnectedMarketplaceAccount(query).getOne();
+    return onlyLinkedMarketplaceAccount(query).getOne();
   }
 
   findConnectedForSellerMessage(input: {

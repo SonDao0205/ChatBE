@@ -1,6 +1,6 @@
 import { AppDataSource } from '../config/database';
 import { Message } from '../entity/Message';
-import { onlyConnectedMarketplaceAccount } from './marketplaceAccount.repository';
+import { onlyLinkedMarketplaceAccount } from './marketplaceAccount.repository';
 
 export class MessageRepository {
   private readonly repository = AppDataSource.getRepository(Message);
@@ -24,7 +24,7 @@ export class MessageRepository {
       })
       .orderBy('COALESCE(message.external_created_at, message.created_at)', 'ASC');
 
-    return onlyConnectedMarketplaceAccount(query).getMany();
+    return onlyLinkedMarketplaceAccount(query).getMany();
   }
 
   findByConversationAndExternalMessage(input: {
