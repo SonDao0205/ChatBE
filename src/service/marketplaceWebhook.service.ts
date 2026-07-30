@@ -1,11 +1,12 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
-import { AppDataSource } from '../config/database';
-import { Conversation } from '../entity/Conversation';
 import { MarketplaceAccount } from '../entity/MarketplaceAccount';
 import { MarketplaceCustomer } from '../entity/MarketplaceCustomer';
-import { Message } from '../entity/Message';
-import { WebhookInbox } from '../entity/WebhookInbox';
+import { ConversationRepository } from '../repository/conversation.repository';
+import { MarketplaceAccountRepository } from '../repository/marketplaceAccount.repository';
+import { MarketplaceCustomerRepository } from '../repository/marketplaceCustomer.repository';
+import { MessageRepository } from '../repository/message.repository';
+import { WebhookInboxRepository } from '../repository/webhookInbox.repository';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
 
 type MarketplaceCode = 'TIKTOK_SHOP' | 'LAZADA';
@@ -93,6 +94,12 @@ function compactHeaders(headers: IncomingHttpHeaders) {
 }
 
 export class MarketplaceWebhookService {
+  private readonly conversationRepository = new ConversationRepository();
+  private readonly customerRepository = new MarketplaceCustomerRepository();
+  private readonly marketplaceAccountRepository = new MarketplaceAccountRepository();
+  private readonly messageRepository = new MessageRepository();
+  private readonly webhookInboxRepository = new WebhookInboxRepository();
+
   async receive(input: { rawBody: Buffer; headers: IncomingHttpHeaders }) {
     const marketplaceCode = this.getMarketplaceCode(input.headers);
     this.verifySignature(marketplaceCode, input.rawBody, input.headers);
@@ -119,18 +126,18 @@ export class MarketplaceWebhookService {
       webhookInbox.processingStatus = 'PROCESSING';
       webhookInbox.attemptCount += 1;
       webhookInbox.lastError = null;
-      await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
+      await this.webhookInboxRepository.save(webhookInbox);
 
       await this.upsertNormalizedMessage(marketplaceAccount, normalizedMessage);
 
       webhookInbox.processingStatus = 'PROCESSED';
       webhookInbox.processedAt = new Date();
-      await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
+      await this.webhookInboxRepository.save(webhookInbox);
     } catch (error) {
       webhookInbox.processingStatus = 'FAILED';
       webhookInbox.lastError =
         error instanceof Error ? error.message : 'Cannot process webhook.';
-      await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
+      await this.webhookInboxRepository.save(webhookInbox);
       throw error;
     }
   }
@@ -263,27 +270,11 @@ export class MarketplaceWebhookService {
     marketplaceCode: MarketplaceCode,
     externalAccountId: string,
   ) {
-    const accountRepository = AppDataSource.getRepository(MarketplaceAccount);
-
-    const account = await accountRepository
-      .createQueryBuilder('account')
-      .innerJoin('account.marketplace', 'marketplace')
-      .innerJoin('account.credentials', 'credentials')
-      .where('marketplace.marketplace_code = :marketplaceCode', {
+    const account =
+      await this.marketplaceAccountRepository.findConnectedByMarketplaceAndExternalAccount({
         marketplaceCode,
-      })
-      .andWhere('account.external_account_id = :externalAccountId', {
         externalAccountId,
-      })
-      .andWhere('account.connection_status = :connectionStatus', {
-        connectionStatus: 'CONNECTED',
-      })
-      .andWhere('account.deleted_at IS NULL')
-      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
-      .andWhere(
-        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
-      )
-      .getOne();
+      });
 
     if (!account) {
       throw new WebhookIgnoredError(
@@ -299,28 +290,11 @@ export class MarketplaceWebhookService {
     normalizedMessage: NormalizedMarketplaceMessage,
     headersJson: Record<string, unknown>,
   ) {
-    const repository = AppDataSource.getRepository(WebhookInbox);
-    const existing = await repository.findOneBy({
-      marketplaceAccountId: marketplaceAccount.id,
+    return this.webhookInboxRepository.findOrCreate({
+      marketplaceAccount,
       externalEventId: normalizedMessage.externalEventId,
-    });
-
-    if (existing) return existing;
-
-    return repository.save({
-      id: randomUUID(),
-      tenantId: marketplaceAccount.tenantId,
-      marketplaceAccountId: marketplaceAccount.id,
-      externalEventId: normalizedMessage.externalEventId,
-      eventType: 'CHAT_MESSAGE',
-      signatureValid: true,
       headersJson,
       payloadJson: normalizedMessage.rawPayload,
-      processingStatus: 'RECEIVED',
-      attemptCount: 0,
-      receivedAt: new Date(),
-      processedAt: null,
-      lastError: null,
     });
   }
 
@@ -329,26 +303,19 @@ export class MarketplaceWebhookService {
     input: NormalizedMarketplaceMessage,
   ) {
     const tenantId = marketplaceAccount.tenantId;
-    const customerRepository = AppDataSource.getRepository(MarketplaceCustomer);
-    const conversationRepository = AppDataSource.getRepository(Conversation);
-    const messageRepository = AppDataSource.getRepository(Message);
 
-    let conversation = await conversationRepository.findOne({
-      where: {
+    let conversation =
+      await this.conversationRepository.findByTenantAccountAndExternalConversation({
         tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         externalConversationId: input.externalConversationId,
-      },
-      relations: {
-        marketplaceCustomer: true,
-      },
-    });
+      });
 
     let customer: MarketplaceCustomer | null =
       conversation?.marketplaceCustomer ?? null;
 
     if (!customer) {
-      customer = await customerRepository.findOneBy({
+      customer = await this.customerRepository.findByTenantAccountAndExternalCustomer({
         tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         externalCustomerId: input.externalCustomerId,
@@ -356,7 +323,7 @@ export class MarketplaceWebhookService {
     }
 
     if (!customer) {
-      customer = await customerRepository.save({
+      customer = await this.customerRepository.save({
         id: randomUUID(),
         tenantId,
         marketplaceAccountId: marketplaceAccount.id,
@@ -372,7 +339,7 @@ export class MarketplaceWebhookService {
     }
 
     if (!conversation) {
-      conversation = await conversationRepository.save({
+      conversation = await this.conversationRepository.save({
         id: randomUUID(),
         tenantId,
         marketplaceAccountId: marketplaceAccount.id,
@@ -390,14 +357,14 @@ export class MarketplaceWebhookService {
       });
     }
 
-    const existingMessage = await messageRepository.findOneBy({
+    const existingMessage = await this.messageRepository.findByConversationAndExternalMessage({
       conversationId: conversation.id,
       externalMessageId: input.externalMessageId,
     });
 
     if (existingMessage) return;
 
-    const message = await messageRepository.save({
+    const message = await this.messageRepository.save({
       id: randomUUID(),
       tenantId,
       conversationId: conversation.id,
@@ -427,7 +394,7 @@ export class MarketplaceWebhookService {
       conversation.unreadCount += 1;
     }
 
-    await conversationRepository.save(conversation);
+    await this.conversationRepository.save(conversation);
 
     emitMessageCreated(conversation.id, {
       conversationId: conversation.id,
