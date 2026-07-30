@@ -51,41 +51,40 @@ export class MarketplaceMessageSenderService {
     const messageRepository = AppDataSource.getRepository(Message);
     const credentialsRepository = AppDataSource.getRepository(MarketplaceCredentials);
 
-    const conversation = await conversationRepository.findOneOrFail({
-      where: {
-        id: input.conversationId,
-        tenantId,
-      },
-      relations: {
-        marketplaceAccount: {
-          marketplace: true,
-        },
-      },
-    });
+    const conversation = await conversationRepository
+      .createQueryBuilder('conversation')
+      .innerJoinAndSelect('conversation.marketplaceAccount', 'account')
+      .innerJoinAndSelect('account.marketplace', 'marketplace')
+      .where('conversation.id = :conversationId', {
+        conversationId: input.conversationId,
+      })
+      .andWhere('conversation.tenant_id = :tenantId', { tenantId })
+      .andWhere('account.connection_status = :connectionStatus', {
+        connectionStatus: 'CONNECTED',
+      })
+      .andWhere('account.deleted_at IS NULL')
+      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
+      .getOne();
 
-    const marketplaceCode =
-      conversation.marketplaceAccount.marketplace.marketplaceCode;
-    const marketplaceAccount = conversation.marketplaceAccount;
-    const now = new Date();
-
-    if (
-      marketplaceAccount.connectionStatus !== 'CONNECTED' ||
-      marketplaceAccount.deletedAt ||
-      (marketplaceAccount.expiresAt && marketplaceAccount.expiresAt <= now)
-    ) {
+    if (!conversation) {
       throw new Error('Marketplace account is not connected.');
     }
 
-    const credentials = await credentialsRepository.findOneBy({
-      marketplaceAccountId: conversation.marketplaceAccountId,
-    });
+    const marketplaceCode =
+      conversation.marketplaceAccount.marketplace.marketplaceCode;
+
+    const credentials = await credentialsRepository
+      .createQueryBuilder('credentials')
+      .where('credentials.marketplace_account_id = :marketplaceAccountId', {
+        marketplaceAccountId: conversation.marketplaceAccountId,
+      })
+      .andWhere(
+        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
+      )
+      .getOne();
 
     if (!credentials) {
       throw new Error('Marketplace credential is missing.');
-    }
-
-    if (credentials.accessTokenExpiresAt && credentials.accessTokenExpiresAt <= now) {
-      throw new Error('Marketplace seller access token is expired.');
     }
 
     const accessToken = decryptMarketplaceSecret(credentials.accessTokenEncrypted);
