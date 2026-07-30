@@ -2,7 +2,7 @@ import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { MarketplaceAccount } from '../entity/MarketplaceAccount';
 
-export function onlyConnectedMarketplaceAccount<T extends ObjectLiteral>(
+export function onlyLinkedMarketplaceAccount<T extends ObjectLiteral>(
   query: SelectQueryBuilder<T>,
   accountAlias = 'account',
   credentialsAlias = 'credentials',
@@ -12,7 +12,15 @@ export function onlyConnectedMarketplaceAccount<T extends ObjectLiteral>(
     .andWhere(`${accountAlias}.connection_status = :connectedStatus`, {
       connectedStatus: 'CONNECTED',
     })
-    .andWhere(`${accountAlias}.deleted_at IS NULL`)
+    .andWhere(`${accountAlias}.deleted_at IS NULL`);
+}
+
+export function onlyConnectedMarketplaceAccount<T extends ObjectLiteral>(
+  query: SelectQueryBuilder<T>,
+  accountAlias = 'account',
+  credentialsAlias = 'credentials',
+) {
+  return onlyLinkedMarketplaceAccount(query, accountAlias, credentialsAlias)
     .andWhere(
       `(${accountAlias}.expires_at IS NULL OR ${accountAlias}.expires_at > UTC_TIMESTAMP(3))`,
     )
