@@ -21,8 +21,20 @@ export class MarketplaceCredentials {
   @Column({ name: 'signing_secret_encrypted', type: 'mediumtext', nullable: true })
   signingSecretEncrypted!: string | null;
 
+  @Column({ name: 'scopes_json', type: 'json' })
+  scopesJson!: unknown;
+
   @Column({ name: 'encryption_key_version', type: 'varchar', length: 30 })
   encryptionKeyVersion!: string;
+
+  @Column({ name: 'access_token_expires_at', type: 'datetime', precision: 3, nullable: true })
+  accessTokenExpiresAt!: Date | null;
+
+  @Column({ name: 'refresh_token_expires_at', type: 'datetime', precision: 3, nullable: true })
+  refreshTokenExpiresAt!: Date | null;
+
+  @Column({ name: 'last_refreshed_at', type: 'datetime', precision: 3, nullable: true })
+  lastRefreshedAt!: Date | null;
 
   @ManyToOne(() => MarketplaceAccount, (marketplaceAccount) => marketplaceAccount.credentials)
   @JoinColumn({ name: 'marketplace_account_id' })

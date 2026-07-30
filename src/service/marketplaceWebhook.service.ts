@@ -2,7 +2,6 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import { AppDataSource } from '../config/database';
 import { Conversation } from '../entity/Conversation';
-import { Marketplace } from '../entity/Marketplace';
 import { MarketplaceAccount } from '../entity/MarketplaceAccount';
 import { MarketplaceCustomer } from '../entity/MarketplaceCustomer';
 import { Message } from '../entity/Message';
@@ -39,8 +38,12 @@ export class WebhookAuthenticationError extends Error {
   }
 }
 
-const defaultTenantId =
-  process.env.DEFAULT_TENANT_ID || '20000000-0000-0000-0000-000000000001';
+export class WebhookIgnoredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WebhookIgnoredError';
+  }
+}
 
 const mockWebhookSecrets = {
   TIKTOK_SHOP: {
@@ -91,13 +94,13 @@ function compactHeaders(headers: IncomingHttpHeaders) {
 
 export class MarketplaceWebhookService {
   async receive(input: { rawBody: Buffer; headers: IncomingHttpHeaders }) {
-    const payload = parseJsonObject(input.rawBody);
     const marketplaceCode = this.getMarketplaceCode(input.headers);
-    const normalizedMessage = this.normalizeMessage(marketplaceCode, payload);
-
     this.verifySignature(marketplaceCode, input.rawBody, input.headers);
 
-    const marketplaceAccount = await this.findOrCreateMarketplaceAccount(
+    const payload = parseJsonObject(input.rawBody);
+    const normalizedMessage = this.normalizeMessage(marketplaceCode, payload);
+
+    const marketplaceAccount = await this.requireConnectedMarketplaceAccount(
       normalizedMessage.marketplaceCode,
       normalizedMessage.externalAccountId,
     );
@@ -256,37 +259,39 @@ export class MarketplaceWebhookService {
     };
   }
 
-  private async findOrCreateMarketplaceAccount(
+  private async requireConnectedMarketplaceAccount(
     marketplaceCode: MarketplaceCode,
     externalAccountId: string,
   ) {
-    const marketplaceRepository = AppDataSource.getRepository(Marketplace);
     const accountRepository = AppDataSource.getRepository(MarketplaceAccount);
 
-    const marketplace = await marketplaceRepository.findOneByOrFail({
-      marketplaceCode,
-    });
+    const account = await accountRepository
+      .createQueryBuilder('account')
+      .innerJoin('account.marketplace', 'marketplace')
+      .innerJoin('account.credentials', 'credentials')
+      .where('marketplace.marketplace_code = :marketplaceCode', {
+        marketplaceCode,
+      })
+      .andWhere('account.external_account_id = :externalAccountId', {
+        externalAccountId,
+      })
+      .andWhere('account.connection_status = :connectionStatus', {
+        connectionStatus: 'CONNECTED',
+      })
+      .andWhere('account.deleted_at IS NULL')
+      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
+      .andWhere(
+        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
+      )
+      .getOne();
 
-    const existingAccount = await accountRepository.findOneBy({
-      tenantId: defaultTenantId,
-      marketplaceId: marketplace.id,
-      externalAccountId,
-    });
+    if (!account) {
+      throw new WebhookIgnoredError(
+        'Marketplace account is not connected for this shop.',
+      );
+    }
 
-    if (existingAccount) return existingAccount;
-
-    return accountRepository.save({
-      id: randomUUID(),
-      tenantId: defaultTenantId,
-      marketplaceId: marketplace.id,
-      externalAccountId,
-      shopCipher: null,
-      externalShopName: externalAccountId,
-      siteId: 'VN',
-      currency: 'VND',
-      timezoneName: 'Asia/Ho_Chi_Minh',
-      connectionStatus: 'CONNECTED',
-    });
+    return account;
   }
 
   private async findOrCreateWebhookInbox(
@@ -304,7 +309,7 @@ export class MarketplaceWebhookService {
 
     return repository.save({
       id: randomUUID(),
-      tenantId: defaultTenantId,
+      tenantId: marketplaceAccount.tenantId,
       marketplaceAccountId: marketplaceAccount.id,
       externalEventId: normalizedMessage.externalEventId,
       eventType: 'CHAT_MESSAGE',
@@ -323,13 +328,14 @@ export class MarketplaceWebhookService {
     marketplaceAccount: MarketplaceAccount,
     input: NormalizedMarketplaceMessage,
   ) {
+    const tenantId = marketplaceAccount.tenantId;
     const customerRepository = AppDataSource.getRepository(MarketplaceCustomer);
     const conversationRepository = AppDataSource.getRepository(Conversation);
     const messageRepository = AppDataSource.getRepository(Message);
 
     let conversation = await conversationRepository.findOne({
       where: {
-        tenantId: defaultTenantId,
+        tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         externalConversationId: input.externalConversationId,
       },
@@ -343,7 +349,7 @@ export class MarketplaceWebhookService {
 
     if (!customer) {
       customer = await customerRepository.findOneBy({
-        tenantId: defaultTenantId,
+        tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         externalCustomerId: input.externalCustomerId,
       });
@@ -352,7 +358,7 @@ export class MarketplaceWebhookService {
     if (!customer) {
       customer = await customerRepository.save({
         id: randomUUID(),
-        tenantId: defaultTenantId,
+        tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         externalCustomerId: input.externalCustomerId,
         externalImUserId: input.externalImUserId,
@@ -368,7 +374,7 @@ export class MarketplaceWebhookService {
     if (!conversation) {
       conversation = await conversationRepository.save({
         id: randomUUID(),
-        tenantId: defaultTenantId,
+        tenantId,
         marketplaceAccountId: marketplaceAccount.id,
         marketplaceCustomerId: customer.id,
         externalConversationId: input.externalConversationId,
@@ -393,7 +399,7 @@ export class MarketplaceWebhookService {
 
     const message = await messageRepository.save({
       id: randomUUID(),
-      tenantId: defaultTenantId,
+      tenantId,
       conversationId: conversation.id,
       externalMessageId: input.externalMessageId,
       clientMessageId: null,
