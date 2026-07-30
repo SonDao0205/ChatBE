@@ -1,9 +1,8 @@
 import axios from 'axios';
 import { createDecipheriv, randomUUID } from 'node:crypto';
-import { AppDataSource } from '../config/database';
-import { Conversation } from '../entity/Conversation';
-import { MarketplaceCredentials } from '../entity/MarketplaceCredentials';
-import { Message } from '../entity/Message';
+import { ConversationRepository } from '../repository/conversation.repository';
+import { MarketplaceCredentialRepository } from '../repository/marketplaceCredential.repository';
+import { MessageRepository } from '../repository/message.repository';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
 
 const defaultTenantId =
@@ -34,6 +33,10 @@ function decryptMarketplaceSecret(value: string) {
 }
 
 export class MarketplaceMessageSenderService {
+  private readonly conversationRepository = new ConversationRepository();
+  private readonly credentialRepository = new MarketplaceCredentialRepository();
+  private readonly messageRepository = new MessageRepository();
+
   async sendSellerMessage(input: {
     conversationId: string;
     text: string;
@@ -47,24 +50,10 @@ export class MarketplaceMessageSenderService {
       throw new Error('Message text is required.');
     }
 
-    const conversationRepository = AppDataSource.getRepository(Conversation);
-    const messageRepository = AppDataSource.getRepository(Message);
-    const credentialsRepository = AppDataSource.getRepository(MarketplaceCredentials);
-
-    const conversation = await conversationRepository
-      .createQueryBuilder('conversation')
-      .innerJoinAndSelect('conversation.marketplaceAccount', 'account')
-      .innerJoinAndSelect('account.marketplace', 'marketplace')
-      .where('conversation.id = :conversationId', {
-        conversationId: input.conversationId,
-      })
-      .andWhere('conversation.tenant_id = :tenantId', { tenantId })
-      .andWhere('account.connection_status = :connectionStatus', {
-        connectionStatus: 'CONNECTED',
-      })
-      .andWhere('account.deleted_at IS NULL')
-      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
-      .getOne();
+    const conversation = await this.conversationRepository.findConnectedForSellerMessage({
+      tenantId,
+      conversationId: input.conversationId,
+    });
 
     if (!conversation) {
       throw new Error('Marketplace account is not connected.');
@@ -73,15 +62,10 @@ export class MarketplaceMessageSenderService {
     const marketplaceCode =
       conversation.marketplaceAccount.marketplace.marketplaceCode;
 
-    const credentials = await credentialsRepository
-      .createQueryBuilder('credentials')
-      .where('credentials.marketplace_account_id = :marketplaceAccountId', {
-        marketplaceAccountId: conversation.marketplaceAccountId,
-      })
-      .andWhere(
-        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
-      )
-      .getOne();
+    const credentials =
+      await this.credentialRepository.findValidAccessTokenByMarketplaceAccountId(
+        conversation.marketplaceAccountId,
+      );
 
     if (!credentials) {
       throw new Error('Marketplace credential is missing.');
@@ -95,7 +79,7 @@ export class MarketplaceMessageSenderService {
 
     const clientMessageId = randomUUID();
 
-    const queuedMessage = messageRepository.create({
+    const queuedMessage = this.messageRepository.create({
       id: randomUUID(),
       tenantId,
       conversationId: conversation.id,
@@ -116,7 +100,7 @@ export class MarketplaceMessageSenderService {
       failedAt: null,
       externalCreatedAt: null,
     });
-    const message = await messageRepository.save(queuedMessage);
+    const message = await this.messageRepository.save(queuedMessage);
 
     emitMessageCreated(conversation.id, {
       conversationId: conversation.id,
@@ -157,8 +141,8 @@ export class MarketplaceMessageSenderService {
       conversation.lastMessagePreview = text;
       conversation.lastMessageAt = sentAt;
 
-      await messageRepository.save(message);
-      await conversationRepository.save(conversation);
+      await this.messageRepository.save(message);
+      await this.conversationRepository.save(conversation);
 
       emitMessageCreated(conversation.id, {
         conversationId: conversation.id,
@@ -176,7 +160,7 @@ export class MarketplaceMessageSenderService {
       message.errorMessage =
         error instanceof Error ? error.message : 'Cannot send marketplace message.';
 
-      await messageRepository.save(message);
+      await this.messageRepository.save(message);
 
       emitMessageCreated(conversation.id, {
         conversationId: conversation.id,
