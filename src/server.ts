@@ -13,6 +13,12 @@ import conversationRoutes from './routes/conversation.routes';
 import internalAiRoutes from './routes/internalAi.routes';
 import webhookRoutes from './routes/webhook.routes';
 import { setSocketServer } from './service/socket.service';
+import {
+  closeAiAutopilotQueue,
+  pingAiQueueRedis,
+  startAiAutopilotWorker,
+} from './service/aiAutopilotQueue.service';
+import { shopKnowledgeService } from './service/shopKnowledge.service';
 
 dotenv.config();
 
@@ -57,6 +63,15 @@ async function bootstrap() {
     process.exit(1);
   }
 
+  try {
+    await startAiAutopilotWorker();
+    console.log('✅ AI autopilot worker connected to Redis');
+  } catch (err) {
+    console.error('❌ AI autopilot worker failed to start:', err);
+    await AppDataSource.destroy();
+    process.exit(1);
+  }
+
   // ─── Khởi tạo Express ──────────────────────────────────────────
   const app = express();
   const httpServer = createServer(app);
@@ -87,12 +102,21 @@ async function bootstrap() {
   }));
 
   // ─── Health check ──────────────────────────────────────────────
-  app.get('/health', (_req, res) => {
+  app.get('/health', async (_req, res) => {
+    let redis = 'disconnected';
+    try {
+      redis = (await pingAiQueueRedis()) === 'PONG' ? 'connected' : 'disconnected';
+    } catch {
+      redis = 'disconnected';
+    }
     res.json({
-      status: 'ok',
+      status:
+        AppDataSource.isInitialized && redis === 'connected' ? 'ok' : 'degraded',
       service: 'chat-backend',
       timestamp: new Date().toISOString(),
       db: AppDataSource.isInitialized ? 'connected' : 'disconnected',
+      redis,
+      aiAutopilot: redis === 'connected' ? 'ready' : 'degraded',
     });
   });
 
@@ -164,10 +188,13 @@ async function bootstrap() {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
   });
+  shopKnowledgeService.startAutomaticRefresh();
 
   // ─── Graceful shutdown ─────────────────────────────────────────
   const shutdown = async (signal: string) => {
     console.log(`\n⚠️  Received ${signal}. Shutting down gracefully...`);
+    await shopKnowledgeService.close();
+    await closeAiAutopilotQueue();
     await AppDataSource.destroy();
     console.log('✅ Database connection closed');
     process.exit(0);

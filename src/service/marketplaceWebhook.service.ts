@@ -7,7 +7,7 @@ import { MarketplaceCustomer } from '../entity/MarketplaceCustomer';
 import { Message } from '../entity/Message';
 import { WebhookInbox } from '../entity/WebhookInbox';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
-import { AiBackendService } from './aiBackend.service';
+import { enqueueAiAutopilot } from './aiAutopilotQueue.service';
 
 type MarketplaceCode = 'TIKTOK_SHOP' | 'LAZADA';
 type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -94,8 +94,6 @@ function compactHeaders(headers: IncomingHttpHeaders) {
 }
 
 export class MarketplaceWebhookService {
-  private readonly aiBackendService = new AiBackendService();
-
   async receive(input: { rawBody: Buffer; headers: IncomingHttpHeaders }) {
     const marketplaceCode = this.getMarketplaceCode(input.headers);
     this.verifySignature(marketplaceCode, input.rawBody, input.headers);
@@ -140,12 +138,10 @@ export class MarketplaceWebhookService {
         stored.message.senderType === 'CUSTOMER' &&
         stored.message.textContent?.trim()
       ) {
-        void this.aiBackendService.processInboundMessage({
+        await enqueueAiAutopilot({
           tenantId: stored.message.tenantId,
           conversationId: stored.conversation.id,
           messageId: stored.message.id,
-        }).catch((error: unknown) => {
-          console.error('AI autopilot trigger failed:', error);
         });
       }
     } catch (error) {

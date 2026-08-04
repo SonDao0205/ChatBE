@@ -188,6 +188,32 @@ export class MarketplaceMessageSenderService {
       await messageRepository.save(message);
       await conversationRepository.save(conversation);
 
+      if (message.senderType === 'STAFF') {
+        try {
+          await AppDataSource.query(
+            `
+              UPDATE human_handoffs
+              SET status = 'RESOLVED', resolved_at = $1,
+                  resolution_note = COALESCE(
+                    resolution_note,
+                    'Nhân viên đã trả lời khách hàng.'
+                  )
+              WHERE tenant_id = $2
+                AND conversation_id = $3
+                AND status IN ('REQUESTED', 'NOTIFIED', 'ACCEPTED')
+            `,
+            [sentAt, tenantId, conversation.id],
+          );
+        } catch (handoffError) {
+          // The marketplace already accepted the reply. Keep the message sent;
+          // the inbox query can still clear the alert from the STAFF message.
+          console.error('Cannot resolve AI human handoff after staff reply:', {
+            conversationId: conversation.id,
+            handoffError,
+          });
+        }
+      }
+
       emitMessageCreated(conversation.id, {
         conversationId: conversation.id,
         message,

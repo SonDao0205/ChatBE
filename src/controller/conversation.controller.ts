@@ -64,6 +64,74 @@ export async function getConversations(
     }
 
     const conversations = await query.getMany();
+    const conversationIds = conversations.map((conversation) => conversation.id);
+    const aiIssues = conversationIds.length > 0
+      ? await AppDataSource.query<Array<{
+          conversation_id: string;
+          issue_reason: string | null;
+        }>>(
+          `
+            SELECT conversation.id AS conversation_id,
+                   COALESCE(latest_run.failure_reason, handoff.reason_text,
+                            latest_run.error_code, 'AI cần nhân viên xử lý.') AS issue_reason
+            FROM conversations conversation
+            LEFT JOIN LATERAL (
+              SELECT run.status, run.error_code, run.failure_reason, run.created_at
+              FROM ai_response_runs run
+              WHERE run.tenant_id = conversation.tenant_id
+                AND run.conversation_id = conversation.id
+              ORDER BY run.created_at DESC
+              LIMIT 1
+            ) latest_run ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT human_handoff.id, human_handoff.reason_text,
+                     human_handoff.requested_at
+              FROM human_handoffs human_handoff
+              WHERE human_handoff.tenant_id = conversation.tenant_id
+                AND human_handoff.conversation_id = conversation.id
+                AND human_handoff.status IN ('REQUESTED', 'NOTIFIED', 'ACCEPTED')
+              ORDER BY human_handoff.requested_at DESC
+              LIMIT 1
+            ) handoff ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT COALESCE(message.sent_at, message.external_created_at,
+                              message.created_at) AS responded_at
+              FROM messages message
+              WHERE message.tenant_id = conversation.tenant_id
+                AND message.conversation_id = conversation.id
+                AND message.direction = 'OUTBOUND'
+                AND message.sender_type = 'STAFF'
+                AND message.delivery_status IN ('SENT', 'DELIVERED', 'READ')
+              ORDER BY COALESCE(message.sent_at, message.external_created_at,
+                                message.created_at) DESC
+              LIMIT 1
+            ) staff_response ON TRUE
+            WHERE conversation.tenant_id = $1
+              AND conversation.id = ANY($2::text[])
+              AND (
+                (
+                  (latest_run.status IN ('FAILED', 'HANDED_OFF', 'REJECTED')
+                    OR latest_run.error_code IS NOT NULL)
+                  AND (
+                    staff_response.responded_at IS NULL
+                    OR staff_response.responded_at < latest_run.created_at
+                  )
+                )
+                OR (
+                  handoff.id IS NOT NULL
+                  AND (
+                    staff_response.responded_at IS NULL
+                    OR staff_response.responded_at < handoff.requested_at
+                  )
+                )
+              )
+          `,
+          [tenantId, conversationIds],
+        )
+      : [];
+    const aiIssueByConversationId = new Map(
+      aiIssues.map((issue) => [issue.conversation_id, issue.issue_reason]),
+    );
 
     response.json({
       code: 0,
@@ -79,6 +147,9 @@ export async function getConversations(
         phone: conversation.marketplaceCustomer.phoneMasked,
         status: conversation.internalStatus,
         priority: conversation.priority,
+        aiMode: conversation.aiMode,
+        aiNeedsHuman: aiIssueByConversationId.has(conversation.id),
+        aiIssueReason: aiIssueByConversationId.get(conversation.id) ?? null,
         unreadCount: conversation.unreadCount,
         lastMessage: conversation.lastMessagePreview,
         lastMessageAt: conversation.lastMessageAt,
