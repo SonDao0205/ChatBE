@@ -10,6 +10,7 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { AppDataSource } from './config/database';
 import conversationRoutes from './routes/conversation.routes';
+import internalAiRoutes from './routes/internalAi.routes';
 import webhookRoutes from './routes/webhook.routes';
 import { setSocketServer } from './service/socket.service';
 
@@ -47,12 +48,12 @@ function corsOrigin(
 }
 
 async function bootstrap() {
-  // ─── Kết nối MySQL ─────────────────────────────────────────────
+  // ─── Kết nối PostgreSQL ─────────────────────────────────────────
   try {
     await AppDataSource.initialize();
-    console.log('✅ MySQL connected successfully');
+    console.log('✅ PostgreSQL connected successfully');
   } catch (err) {
-    console.error('❌ MySQL connection failed:', err);
+    console.error('❌ PostgreSQL connection failed:', err);
     process.exit(1);
   }
 
@@ -99,6 +100,7 @@ async function bootstrap() {
   // TODO: import và đăng ký routes tại đây
   // app.use('/api/v1/messages', messageRoutes);
   app.use('/api/v1', conversationRoutes);
+  app.use('/api/v1', internalAiRoutes);
 
   app.use(
     (

@@ -31,10 +31,10 @@ export class MarketplaceCustomer {
   @Column({ name: 'email_masked', type: 'varchar', length: 255, nullable: true })
   emailMasked!: string | null;
 
-  @Column({ name: 'raw_payload', type: 'json' })
+  @Column({ name: 'raw_payload', type: 'jsonb' })
   rawPayload!: Record<string, unknown>;
 
-  @Column({ name: 'last_seen_at', type: 'datetime', precision: 3 })
+  @Column({ name: 'last_seen_at', type: 'timestamptz', precision: 3 })
   lastSeenAt!: Date;
 
   @ManyToOne(() => MarketplaceAccount, (marketplaceAccount) => marketplaceAccount.marketplaceCustomers)

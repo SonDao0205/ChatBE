@@ -7,6 +7,7 @@ import { MarketplaceCustomer } from '../entity/MarketplaceCustomer';
 import { Message } from '../entity/Message';
 import { WebhookInbox } from '../entity/WebhookInbox';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
+import { AiBackendService } from './aiBackend.service';
 
 type MarketplaceCode = 'TIKTOK_SHOP' | 'LAZADA';
 type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -93,6 +94,8 @@ function compactHeaders(headers: IncomingHttpHeaders) {
 }
 
 export class MarketplaceWebhookService {
+  private readonly aiBackendService = new AiBackendService();
+
   async receive(input: { rawBody: Buffer; headers: IncomingHttpHeaders }) {
     const marketplaceCode = this.getMarketplaceCode(input.headers);
     this.verifySignature(marketplaceCode, input.rawBody, input.headers);
@@ -121,11 +124,30 @@ export class MarketplaceWebhookService {
       webhookInbox.lastError = null;
       await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
 
-      await this.upsertNormalizedMessage(marketplaceAccount, normalizedMessage);
+      const stored = await this.upsertNormalizedMessage(
+        marketplaceAccount,
+        normalizedMessage,
+      );
 
       webhookInbox.processingStatus = 'PROCESSED';
       webhookInbox.processedAt = new Date();
       await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
+
+      if (
+        stored &&
+        stored.conversation.aiMode === 'AUTO' &&
+        stored.message.direction === 'INBOUND' &&
+        stored.message.senderType === 'CUSTOMER' &&
+        stored.message.textContent?.trim()
+      ) {
+        void this.aiBackendService.processInboundMessage({
+          tenantId: stored.message.tenantId,
+          conversationId: stored.conversation.id,
+          messageId: stored.message.id,
+        }).catch((error: unknown) => {
+          console.error('AI autopilot trigger failed:', error);
+        });
+      }
     } catch (error) {
       webhookInbox.processingStatus = 'FAILED';
       webhookInbox.lastError =
@@ -279,9 +301,9 @@ export class MarketplaceWebhookService {
         connectionStatus: 'CONNECTED',
       })
       .andWhere('account.deleted_at IS NULL')
-      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
+      .andWhere('(account.expires_at IS NULL OR account.expires_at > CURRENT_TIMESTAMP)')
       .andWhere(
-        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
+        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > CURRENT_TIMESTAMP)',
       )
       .getOne();
 
@@ -395,7 +417,7 @@ export class MarketplaceWebhookService {
       externalMessageId: input.externalMessageId,
     });
 
-    if (existingMessage) return;
+    if (existingMessage) return null;
 
     const message = await messageRepository.save({
       id: randomUUID(),
@@ -437,5 +459,6 @@ export class MarketplaceWebhookService {
       conversationId: conversation.id,
       conversation,
     });
+    return { conversation, message };
   }
 }

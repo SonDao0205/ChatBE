@@ -12,28 +12,28 @@ export class MarketplaceCredentials {
   @Column({ name: 'app_key', type: 'varchar', length: 150, nullable: true })
   appKey!: string | null;
 
-  @Column({ name: 'access_token_encrypted', type: 'mediumtext' })
+  @Column({ name: 'access_token_encrypted', type: 'text' })
   accessTokenEncrypted!: string;
 
-  @Column({ name: 'refresh_token_encrypted', type: 'mediumtext', nullable: true })
+  @Column({ name: 'refresh_token_encrypted', type: 'text', nullable: true })
   refreshTokenEncrypted!: string | null;
 
-  @Column({ name: 'signing_secret_encrypted', type: 'mediumtext', nullable: true })
+  @Column({ name: 'signing_secret_encrypted', type: 'text', nullable: true })
   signingSecretEncrypted!: string | null;
 
-  @Column({ name: 'scopes_json', type: 'json' })
+  @Column({ name: 'scopes_json', type: 'jsonb' })
   scopesJson!: unknown;
 
   @Column({ name: 'encryption_key_version', type: 'varchar', length: 30 })
   encryptionKeyVersion!: string;
 
-  @Column({ name: 'access_token_expires_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'access_token_expires_at', type: 'timestamptz', precision: 3, nullable: true })
   accessTokenExpiresAt!: Date | null;
 
-  @Column({ name: 'refresh_token_expires_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'refresh_token_expires_at', type: 'timestamptz', precision: 3, nullable: true })
   refreshTokenExpiresAt!: Date | null;
 
-  @Column({ name: 'last_refreshed_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'last_refreshed_at', type: 'timestamptz', precision: 3, nullable: true })
   lastRefreshedAt!: Date | null;
 
   @ManyToOne(() => MarketplaceAccount, (marketplaceAccount) => marketplaceAccount.credentials)

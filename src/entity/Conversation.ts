@@ -29,7 +29,7 @@ export class Conversation {
   @Column({ name: 'priority', type: 'varchar', length: 20 })
   priority!: string;
 
-  @Column({ name: 'unread_count', type: 'int', unsigned: true })
+  @Column({ name: 'unread_count', type: 'int' })
   unreadCount!: number;
 
   @Column({ name: 'last_message_id', type: 'char', length: 36, nullable: true })
@@ -38,13 +38,13 @@ export class Conversation {
   @Column({ name: 'last_message_preview', type: 'varchar', length: 500, nullable: true })
   lastMessagePreview!: string | null;
 
-  @Column({ name: 'last_message_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'last_message_at', type: 'timestamptz', precision: 3, nullable: true })
   lastMessageAt!: Date | null;
 
   @Column({ name: 'ai_mode', type: 'varchar', length: 20 })
   aiMode!: string;
 
-  @Column({ name: 'raw_payload', type: 'json' })
+  @Column({ name: 'raw_payload', type: 'jsonb' })
   rawPayload!: Record<string, unknown>;
 
   @ManyToOne(() => MarketplaceAccount, (marketplaceAccount) => marketplaceAccount.conversations)

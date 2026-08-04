@@ -37,16 +37,16 @@ export class MarketplaceAccount {
   @Column({ name: 'connection_status', type: 'varchar', length: 20 })
   connectionStatus!: string;
 
-  @Column({ name: 'authorized_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'authorized_at', type: 'timestamptz', precision: 3, nullable: true })
   authorizedAt!: Date | null;
 
-  @Column({ name: 'expires_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'expires_at', type: 'timestamptz', precision: 3, nullable: true })
   expiresAt!: Date | null;
 
-  @Column({ name: 'last_verified_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'last_verified_at', type: 'timestamptz', precision: 3, nullable: true })
   lastVerifiedAt!: Date | null;
 
-  @Column({ name: 'deleted_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'deleted_at', type: 'timestamptz', precision: 3, nullable: true })
   deletedAt!: Date | null;
 
   @ManyToOne(() => Marketplace, (marketplace) => marketplace.marketplaceAccounts)

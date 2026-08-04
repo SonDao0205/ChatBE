@@ -39,6 +39,9 @@ export class MarketplaceMessageSenderService {
     text: string;
     tenantId?: string;
     senderUserId?: string;
+    senderType?: 'STAFF' | 'AI';
+    aiResponseRunId?: string;
+    idempotencyKey?: string;
   }) {
     const tenantId = input.tenantId || defaultTenantId;
     const text = input.text.trim();
@@ -50,6 +53,23 @@ export class MarketplaceMessageSenderService {
     const conversationRepository = AppDataSource.getRepository(Conversation);
     const messageRepository = AppDataSource.getRepository(Message);
     const credentialsRepository = AppDataSource.getRepository(MarketplaceCredentials);
+    const clientMessageId = input.idempotencyKey || randomUUID();
+    let message = input.idempotencyKey
+      ? await messageRepository.findOne({
+          where: {
+            tenantId,
+            conversationId: input.conversationId,
+            clientMessageId,
+          },
+        })
+      : null;
+
+    if (message && message.deliveryStatus !== 'FAILED') {
+      return message;
+    }
+    if (message && message.textContent !== text) {
+      throw new Error('Idempotency key was already used with different message text.');
+    }
 
     const conversation = await conversationRepository
       .createQueryBuilder('conversation')
@@ -63,7 +83,7 @@ export class MarketplaceMessageSenderService {
         connectionStatus: 'CONNECTED',
       })
       .andWhere('account.deleted_at IS NULL')
-      .andWhere('(account.expires_at IS NULL OR account.expires_at > UTC_TIMESTAMP(3))')
+      .andWhere('(account.expires_at IS NULL OR account.expires_at > CURRENT_TIMESTAMP)')
       .getOne();
 
     if (!conversation) {
@@ -79,7 +99,7 @@ export class MarketplaceMessageSenderService {
         marketplaceAccountId: conversation.marketplaceAccountId,
       })
       .andWhere(
-        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > UTC_TIMESTAMP(3))',
+        '(credentials.access_token_expires_at IS NULL OR credentials.access_token_expires_at > CURRENT_TIMESTAMP)',
       )
       .getOne();
 
@@ -93,30 +113,38 @@ export class MarketplaceMessageSenderService {
       throw new Error('Marketplace seller access token is missing.');
     }
 
-    const clientMessageId = randomUUID();
-
-    const queuedMessage = messageRepository.create({
-      id: randomUUID(),
-      tenantId,
-      conversationId: conversation.id,
-      externalMessageId: null,
-      clientMessageId,
-      direction: 'OUTBOUND',
-      senderType: 'STAFF',
-      senderUserId: input.senderUserId || null,
-      messageType: 'TEXT',
-      textContent: text,
-      contentJson: {},
-      rawPayload: {},
-      deliveryStatus: 'QUEUED',
-      moderationStatus: 'NOT_CHECKED',
-      errorMessage: null,
-      queuedAt: new Date(),
-      sentAt: null,
-      failedAt: null,
-      externalCreatedAt: null,
-    });
-    const message = await messageRepository.save(queuedMessage);
+    if (message) {
+      message.deliveryStatus = 'QUEUED';
+      message.errorMessage = null;
+      message.queuedAt = new Date();
+      message.failedAt = null;
+      message = await messageRepository.save(message);
+    } else {
+      const queuedMessage = messageRepository.create({
+        id: randomUUID(),
+        tenantId,
+        conversationId: conversation.id,
+        externalMessageId: null,
+        clientMessageId,
+        direction: 'OUTBOUND',
+        senderType: input.senderType || 'STAFF',
+        senderUserId: input.senderType === 'AI' ? null : input.senderUserId || null,
+        messageType: 'TEXT',
+        textContent: text,
+        contentJson: input.aiResponseRunId
+          ? { aiResponseRunId: input.aiResponseRunId }
+          : {},
+        rawPayload: {},
+        deliveryStatus: 'QUEUED',
+        moderationStatus: 'NOT_CHECKED',
+        errorMessage: null,
+        queuedAt: new Date(),
+        sentAt: null,
+        failedAt: null,
+        externalCreatedAt: null,
+      });
+      message = await messageRepository.save(queuedMessage);
+    }
 
     emitMessageCreated(conversation.id, {
       conversationId: conversation.id,

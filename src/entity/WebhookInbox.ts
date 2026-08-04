@@ -21,22 +21,22 @@ export class WebhookInbox {
   @Column({ name: 'signature_valid', type: 'boolean' })
   signatureValid!: boolean;
 
-  @Column({ name: 'headers_json', type: 'json' })
+  @Column({ name: 'headers_json', type: 'jsonb' })
   headersJson!: Record<string, unknown>;
 
-  @Column({ name: 'payload_json', type: 'json' })
+  @Column({ name: 'payload_json', type: 'jsonb' })
   payloadJson!: Record<string, unknown>;
 
   @Column({ name: 'processing_status', type: 'varchar', length: 20 })
   processingStatus!: 'RECEIVED' | 'PROCESSING' | 'PROCESSED' | 'FAILED' | 'DEAD';
 
-  @Column({ name: 'attempt_count', type: 'int', unsigned: true })
+  @Column({ name: 'attempt_count', type: 'int' })
   attemptCount!: number;
 
-  @Column({ name: 'received_at', type: 'datetime', precision: 3 })
+  @Column({ name: 'received_at', type: 'timestamptz', precision: 3 })
   receivedAt!: Date;
 
-  @Column({ name: 'processed_at', type: 'datetime', precision: 3, nullable: true })
+  @Column({ name: 'processed_at', type: 'timestamptz', precision: 3, nullable: true })
   processedAt!: Date | null;
 
   @Column({ name: 'last_error', type: 'text', nullable: true })
