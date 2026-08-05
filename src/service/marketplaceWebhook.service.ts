@@ -46,18 +46,17 @@ export class WebhookIgnoredError extends Error {
   }
 }
 
-const mockWebhookSecrets = {
-  TIKTOK_SHOP: {
-    appKey: process.env.TIKTOK_OAUTH_CLIENT_ID || 'omni-tiktok-local',
-    appSecret:
-      process.env.TIKTOK_OAUTH_CLIENT_SECRET || 'tiktok-local-secret-change-me',
-  },
-  LAZADA: {
-    appKey: process.env.LAZADA_OAUTH_CLIENT_ID || 'omni-lazada-local',
-    appSecret:
-      process.env.LAZADA_OAUTH_CLIENT_SECRET || 'lazada-local-secret-change-me',
-  },
-};
+function webhookCredentials(marketplaceCode: MarketplaceCode) {
+  const prefix = marketplaceCode === 'TIKTOK_SHOP' ? 'TIKTOK' : 'LAZADA';
+  const appKey = process.env[`${prefix}_OAUTH_CLIENT_ID`]?.trim();
+  const appSecret = process.env[`${prefix}_OAUTH_CLIENT_SECRET`]?.trim();
+  if (!appKey || !appSecret) {
+    throw new WebhookAuthenticationError(
+      `${prefix} webhook credentials are not configured.`,
+    );
+  }
+  return { appKey, appSecret };
+}
 
 function parseJsonObject(rawBody: Buffer): Record<string, unknown> {
   const parsed = JSON.parse(rawBody.toString('utf8')) as unknown;
@@ -167,7 +166,7 @@ export class MarketplaceWebhookService {
     headers: IncomingHttpHeaders,
   ) {
     const receivedSignature = String(headers.authorization || '');
-    const secret = mockWebhookSecrets[marketplaceCode];
+    const secret = webhookCredentials(marketplaceCode);
 
     if (!receivedSignature) {
       throw new WebhookAuthenticationError('Missing webhook signature.');

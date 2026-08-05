@@ -8,19 +8,27 @@ import { emitConversationUpdated, emitMessageCreated } from './socket.service';
 
 const defaultTenantId =
   process.env.DEFAULT_TENANT_ID || '20000000-0000-0000-0000-000000000001';
-const defaultCredentialEncryptionKey =
-  'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
+
+function marketplaceEncryptionKey() {
+  const encodedKey = process.env.MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY?.trim();
+  if (!encodedKey) {
+    throw new Error('MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY is required.');
+  }
+  const encryptionKey = Buffer.from(encodedKey, 'base64');
+  if (encryptionKey.length !== 32) {
+    throw new Error(
+      'MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes.',
+    );
+  }
+  return encryptionKey;
+}
 
 function decryptMarketplaceSecret(value: string) {
   if (!value.startsWith('v1:')) {
     return value;
   }
 
-  const encryptionKey = Buffer.from(
-    process.env.MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY ||
-      defaultCredentialEncryptionKey,
-    'base64',
-  );
+  const encryptionKey = marketplaceEncryptionKey();
   const payload = Buffer.from(value.slice(3), 'base64');
   const iv = payload.subarray(0, 12);
   const authTag = payload.subarray(payload.length - 16);
