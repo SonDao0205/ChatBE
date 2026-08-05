@@ -3,13 +3,22 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const databaseUrl = process.env.DATABASE_URL;
+
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  username: process.env.DB_USERNAME || 'postgres',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'omnichannel_pos',
+  ...(databaseUrl
+    ? {
+        url: databaseUrl,
+        ssl: { rejectUnauthorized: true },
+      }
+    : {
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        username: process.env.DB_USERNAME || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        database: process.env.DB_NAME || 'omnichannel_pos',
+      }),
   synchronize: false,
   logging: process.env.NODE_ENV === 'development',
   entities: [__dirname + '/../entity/**/*.{ts,js}'],
