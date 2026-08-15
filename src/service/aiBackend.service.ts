@@ -20,6 +20,8 @@ export type AiStatelessRequest = {
     text_content: string;
   }>;
   shop_context: Record<string, unknown>;
+  customer_profile: Record<string, unknown>;
+  response_strategy: Record<string, unknown>;
   facts: Record<string, unknown>;
   sources: AiStatelessSource[];
   previous_ai_text: string | null;
@@ -58,7 +60,51 @@ export type AiStatelessResponse = {
   model: string;
 };
 
+export type CustomerProfileAnalysis = {
+  profile_summary: string;
+  features: Record<string, unknown>;
+  lead_priority: {
+    code: 'HOT_LEAD' | 'WARM_LEAD' | 'COLD_LEAD' | 'EXISTING_PRIORITY';
+    score: number;
+    reason: string;
+    evidence_message_ids: string[];
+  };
+  confidence: number;
+  model_version: string;
+};
+
 export class AiBackendService {
+  async analyzeCustomerProfile(
+    tenantId: string,
+    payload: {
+      customer_id: string;
+      existing_profile: Record<string, unknown>;
+      messages: Array<{ id: string; sender_type: string; text_content: string }>;
+      recent_orders: Array<Record<string, unknown>>;
+    },
+  ): Promise<CustomerProfileAnalysis> {
+    const serviceToken = process.env.AI_SERVICE_TOKEN || '';
+    if (!serviceToken) throw new Error('AI_SERVICE_TOKEN is required.');
+    const baseUrl = process.env.AI_BACKEND_URL || 'http://localhost:8083';
+    const response = await axios.post(
+      new URL('/api/v1/stateless/customer-profile', baseUrl).toString(),
+      payload,
+      {
+        timeout: Number(process.env.AI_REQUEST_TIMEOUT_MS || 45_000),
+        headers: {
+          'X-Service-Token': serviceToken,
+          'X-Tenant-Id': tenantId,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    const result = response.data?.data as CustomerProfileAnalysis | undefined;
+    if (!result?.lead_priority?.code) {
+      throw new Error('AI Backend returned an invalid customer profile.');
+    }
+    return result;
+  }
+
   async generateStateless(
     tenantId: string,
     payload: AiStatelessRequest,

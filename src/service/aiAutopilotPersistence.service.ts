@@ -72,7 +72,11 @@ export class AiAutopilotPersistenceService {
               input_tokens = $9, output_tokens = $10,
               cached_tokens = $11, estimated_cost_usd = $12,
               token_usage_json = $13::jsonb,
-              error_code = NULL, failure_reason = NULL
+              error_code = NULL, failure_reason = NULL,
+              customer_profile_version_used = $16,
+              lead_priority_used = $17,
+              response_strategy_used = $18,
+              profile_compliance_json = $19::jsonb
           WHERE id = $14 AND tenant_id = $15
         `,
         [
@@ -91,6 +95,14 @@ export class AiAutopilotPersistenceService {
           JSON.stringify(response.usage),
           input.runId,
           input.tenantId,
+          Number(input.request.customer_profile.profile_version ?? 0),
+          (input.request.customer_profile.lead_priority as { code?: string } | null)?.code ?? null,
+          String(input.request.response_strategy.code ?? ''),
+          JSON.stringify(
+            response.quality_checks.find(
+              (check) => check.check_type === 'PROFILE_COMPLIANCE',
+            ) ?? {},
+          ),
         ],
       );
 

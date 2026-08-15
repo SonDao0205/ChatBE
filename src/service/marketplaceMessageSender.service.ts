@@ -5,6 +5,7 @@ import { Conversation } from '../entity/Conversation';
 import { MarketplaceCredentials } from '../entity/MarketplaceCredentials';
 import { Message } from '../entity/Message';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
+import { enqueueCustomerAiProfile } from './customerAiProfileQueue.service';
 
 const defaultTenantId =
   process.env.DEFAULT_TENANT_ID || '20000000-0000-0000-0000-000000000001';
@@ -229,6 +230,14 @@ export class MarketplaceMessageSenderService {
       emitConversationUpdated(conversation.id, {
         conversationId: conversation.id,
         conversation,
+      });
+      void enqueueCustomerAiProfile({
+        tenantId,
+        marketplaceCustomerId: conversation.marketplaceCustomerId,
+        marketplaceAccountId: conversation.marketplaceAccountId,
+        messageId: message.id,
+      }).catch((profileError: unknown) => {
+        console.error('Cannot enqueue customer profile after outbound message:', profileError);
       });
 
       return message;

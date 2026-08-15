@@ -8,6 +8,8 @@ import { Message } from '../entity/Message';
 import { WebhookInbox } from '../entity/WebhookInbox';
 import { emitConversationUpdated, emitMessageCreated } from './socket.service';
 import { enqueueAiAutopilot } from './aiAutopilotQueue.service';
+import { enqueueCustomerAiProfile } from './customerAiProfileQueue.service';
+import { postPurchaseCareService } from './postPurchaseCare.service';
 
 type MarketplaceCode = 'TIKTOK_SHOP' | 'LAZADA';
 type MessageDirection = 'INBOUND' | 'OUTBOUND';
@@ -130,6 +132,17 @@ export class MarketplaceWebhookService {
       webhookInbox.processedAt = new Date();
       await AppDataSource.getRepository(WebhookInbox).save(webhookInbox);
 
+      if (stored?.message.textContent?.trim()) {
+        void enqueueCustomerAiProfile({
+          tenantId: stored.message.tenantId,
+          marketplaceCustomerId: stored.conversation.marketplaceCustomerId,
+          marketplaceAccountId: stored.conversation.marketplaceAccountId,
+          messageId: stored.message.id,
+        }).catch((error: unknown) => {
+          console.error('Cannot enqueue customer AI profile update:', error);
+        });
+      }
+
       if (
         stored &&
         stored.conversation.aiMode === 'AUTO' &&
@@ -137,6 +150,13 @@ export class MarketplaceWebhookService {
         stored.message.senderType === 'CUSTOMER' &&
         stored.message.textContent?.trim()
       ) {
+        const handedOff = await postPurchaseCareService.recordCustomerReply({
+          tenantId: stored.message.tenantId,
+          conversationId: stored.conversation.id,
+          messageId: stored.message.id,
+          text: stored.message.textContent,
+        });
+        if (handedOff) return;
         await enqueueAiAutopilot({
           tenantId: stored.message.tenantId,
           conversationId: stored.conversation.id,

@@ -19,6 +19,11 @@ import {
   startAiAutopilotWorker,
 } from './service/aiAutopilotQueue.service';
 import { shopKnowledgeService } from './service/shopKnowledge.service';
+import {
+  closeCustomerAiProfileQueue,
+  startCustomerAiProfileWorker,
+} from './service/customerAiProfileQueue.service';
+import { postPurchaseCareService } from './service/postPurchaseCare.service';
 
 dotenv.config();
 
@@ -65,6 +70,7 @@ async function bootstrap() {
 
   try {
     await startAiAutopilotWorker();
+    await startCustomerAiProfileWorker();
     console.log('✅ AI autopilot worker connected to Redis');
   } catch (err) {
     console.error('❌ AI autopilot worker failed to start:', err);
@@ -170,6 +176,10 @@ async function bootstrap() {
       console.log(`User ${socket.id} joined room: ${roomId}`);
     });
 
+    socket.on('join_customer', (marketplaceCustomerId: string) => {
+      socket.join(`customer:${marketplaceCustomerId}`);
+    });
+
     socket.on('send_message', (data: { roomId: string; message: string }) => {
       io.to(data.roomId).emit('receive_message', {
         socketId: socket.id,
@@ -189,11 +199,14 @@ async function bootstrap() {
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
   });
   shopKnowledgeService.startAutomaticRefresh();
+  postPurchaseCareService.start();
 
   // ─── Graceful shutdown ─────────────────────────────────────────
   const shutdown = async (signal: string) => {
     console.log(`\n⚠️  Received ${signal}. Shutting down gracefully...`);
     await shopKnowledgeService.close();
+    postPurchaseCareService.stop();
+    await closeCustomerAiProfileQueue();
     await closeAiAutopilotQueue();
     await AppDataSource.destroy();
     console.log('✅ Database connection closed');

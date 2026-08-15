@@ -296,6 +296,7 @@ export async function getConversationOrders(
         AND order_record.marketplace_account_id = $2
         AND order_record.marketplace_customer_id = $3
         AND order_record.deleted_at IS NULL
+        AND order_record.last_synced_at IS NOT NULL
       GROUP BY
         order_record.id,
         order_record.external_order_id,

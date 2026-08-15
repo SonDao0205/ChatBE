@@ -3,6 +3,7 @@ import type { AiStatelessRequest, AiStatelessSource } from './aiBackend.service'
 import { hybridProductRetriever } from './hybridProductRetriever.service';
 import { customerOrderFactsService } from './customerOrderFacts.service';
 import { compactAiFacts } from './aiFactsCompactor';
+import { customerAiProfileService } from './customerAiProfile.service';
 
 type ConversationRow = {
   id: string;
@@ -147,6 +148,21 @@ export class AiAutopilotContextService {
       return null;
     }
 
+    // Recompute customer memory from the latest marketplace-synchronized orders
+    // before composing a response. Profile failures must not block verified facts.
+    try {
+      await customerAiProfileService.refresh(
+        input.tenantId,
+        conversation.marketplace_customer_id,
+        conversation.marketplace_account_id,
+      );
+    } catch (error) {
+      console.warn('Could not refresh customer profile before AI response.', {
+        conversationId: input.conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     const recentRows = await AppDataSource.query<MessageRow[]>(
       `
         SELECT id, sender_type, direction, text_content, created_at
@@ -198,6 +214,14 @@ export class AiAutopilotContextService {
       [input.tenantId, input.conversationId],
     );
     const quota = await this.loadTokenQuota(input.tenantId);
+    const customerProfile = await customerAiProfileService.getCompactSnapshot(
+      input.tenantId,
+      conversation.marketplace_customer_id,
+    );
+    const leadPriority = (
+      customerProfile.lead_priority as { code?: string } | null | undefined
+    )?.code;
+    const responseStrategy = this.responseStrategy(leadPriority);
 
     return {
       payload: {
@@ -227,6 +251,8 @@ export class AiAutopilotContextService {
           max_response_characters:
             conversation.max_response_characters || 1200,
         },
+        customer_profile: customerProfile,
+        response_strategy: responseStrategy,
         facts: compactAiFacts(facts),
         sources: sources.slice(0, 5).map((source) => ({
           ...source,
@@ -240,6 +266,49 @@ export class AiAutopilotContextService {
       tokenLimit: quota.limit,
       tokensUsed: quota.used,
       humanRespondedAfterTrigger: Boolean(humanRespondedRows[0]?.exists),
+    };
+  }
+
+  private responseStrategy(leadPriority?: string) {
+    if (leadPriority === 'HOT_LEAD') {
+      return {
+        code: 'HELP_PURCHASE_DECISION',
+        goal: 'Giải quyết trở ngại cuối cùng và đưa ra một bước tiếp theo cụ thể.',
+        allow_upsell: true,
+        max_recommendations: 2,
+        rules: [
+          'Trả lời trực tiếp bằng giá, tồn kho và biến thể đã xác thực.',
+          'Không tạo khan hiếm giả hoặc gây áp lực mua hàng.',
+        ],
+      };
+    }
+    if (leadPriority === 'WARM_LEAD') {
+      return {
+        code: 'RESOLVE_OBJECTIONS',
+        goal: 'Giúp khách giảm băn khoăn về tính năng, mức phù hợp hoặc chi phí.',
+        allow_upsell: true,
+        max_recommendations: 3,
+        rules: ['So sánh ngắn gọn.', 'Chỉ hỏi tối đa một câu làm rõ.'],
+      };
+    }
+    if (leadPriority === 'EXISTING_PRIORITY') {
+      return {
+        code: 'SUPPORT_REPURCHASE',
+        goal: 'Hỗ trợ mua lại hoặc chọn sản phẩm bổ sung phù hợp.',
+        allow_upsell: true,
+        max_recommendations: 3,
+        rules: [
+          'Chỉ tham chiếu lịch sử mua liên quan.',
+          'Tránh sản phẩm khách từng không thích hoặc hoàn trả.',
+        ],
+      };
+    }
+    return {
+      code: 'DISCOVER_NEEDS',
+      goal: 'Cung cấp thông tin nền tảng và khám phá nhu cầu.',
+      allow_upsell: false,
+      max_recommendations: 0,
+      rules: ['Không giả định sở thích.', 'Chỉ hỏi một câu làm rõ nhu cầu.'],
     };
   }
 

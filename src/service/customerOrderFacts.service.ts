@@ -39,6 +39,7 @@ export class CustomerOrderFactsService {
             AND order_record.marketplace_customer_id = $3
             AND LOWER(order_record.external_order_id) = ANY($4::text[])
             AND order_record.deleted_at IS NULL
+            AND order_record.last_synced_at IS NOT NULL
           ORDER BY order_record.external_updated_at DESC
           LIMIT 1
         `,
@@ -105,6 +106,7 @@ export class CustomerOrderFactsService {
           AND order_record.marketplace_account_id = $2
           AND order_record.marketplace_customer_id = $3
           AND order_record.deleted_at IS NULL
+          AND order_record.last_synced_at IS NOT NULL
         ORDER BY order_record.external_created_at DESC
         LIMIT $4
       `,

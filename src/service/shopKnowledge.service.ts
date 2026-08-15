@@ -148,8 +148,8 @@ export class ShopKnowledgeService {
   private readonly vectorSize = 64;
   private readonly cacheTtlSeconds = Number(process.env.SHOP_KNOWLEDGE_CACHE_TTL_SECONDS || 3600);
   private readonly refreshIntervalMs = Math.max(
-    60_000,
-    Number(process.env.SHOP_KNOWLEDGE_REFRESH_INTERVAL_MS) || 20 * 60 * 1000,
+    30_000,
+    Number(process.env.SHOP_KNOWLEDGE_REFRESH_INTERVAL_MS) || 30_000,
   );
   private refreshTimer: NodeJS.Timeout | null = null;
   private automaticRefreshRunning = false;

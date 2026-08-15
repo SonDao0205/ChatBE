@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { enqueueAiAutopilot } from '../service/aiAutopilotQueue.service';
 import { MarketplaceMessageSenderService } from '../service/marketplaceMessageSender.service';
 import { shopKnowledgeService } from '../service/shopKnowledge.service';
+import { emitOrderUpdated } from '../service/socket.service';
 
 const marketplaceMessageSenderService = new MarketplaceMessageSenderService();
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -177,6 +178,28 @@ export async function scanPendingAiAutopilotMessage(
       message: 'Pending customer message queued for AI Autopilot',
       data: { status: 'QUEUED', messageId: pending.message_id },
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function receiveOrderStatusUpdated(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+) {
+  try {
+    if (!requireInternalService(request, response)) return;
+    const tenantId = String(request.header('X-Tenant-Id') || '');
+    const orderId = String(request.body.orderId || '');
+    const externalOrderId = String(request.body.externalOrderId || '');
+    const status = String(request.body.status || '');
+    if (!uuidPattern.test(tenantId) || !uuidPattern.test(orderId) || !externalOrderId || !status) {
+      reject(response, 422, 'INVALID_ORDER_EVENT', 'Invalid order status event.');
+      return;
+    }
+    emitOrderUpdated({ tenantId, orderId, externalOrderId, status, updatedAt: new Date().toISOString() });
+    response.status(202).json({ code: 0, message: 'Order event accepted', data: null });
   } catch (error) {
     next(error);
   }
